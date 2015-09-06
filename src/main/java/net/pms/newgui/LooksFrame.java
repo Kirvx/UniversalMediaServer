@@ -41,7 +41,9 @@ import javax.swing.plaf.metal.MetalLookAndFeel;
 import net.pms.Messages;
 import net.pms.PMS;
 import net.pms.configuration.PmsConfiguration;
+import net.pms.configuration.RendererConfiguration;
 import net.pms.io.WindowsNamedPipe;
+import net.pms.newgui.components.CustomJButton;
 import net.pms.newgui.update.AutoUpdateDialog;
 import net.pms.update.AutoUpdater;
 import net.pms.util.PropertiesUtil;
@@ -291,6 +293,11 @@ public class LooksFrame extends JFrame implements IFrame, Observer {
 			title = title + " - " + Messages.getString("LooksFrame.26");
 		}
 
+		if (PMS.getTraceMode() == 2) {
+			// Forced trace mode
+			title = title + "  [" + Messages.getString("TracesTab.10").toUpperCase() + "]";
+		}
+
 		this.setTitle(title);
 		this.setDefaultCloseOperation(JFrame.HIDE_ON_CLOSE);
 		Dimension screenSize = getToolkit().getScreenSize();
@@ -308,10 +315,10 @@ public class LooksFrame extends JFrame implements IFrame, Observer {
 		}
 
 		// Customize the colors used in tooltips
-		UIManager.put("ToolTip.background", new ColorUIResource(125, 184, 47));
-		Border border = BorderFactory.createLineBorder(new Color(125, 184, 47));
+		UIManager.put("ToolTip.background", new ColorUIResource(PMS.getConfiguration().getToolTipBackgroundColor()));
+		Border border = BorderFactory.createLineBorder(PMS.getConfiguration().getToolTipBackgroundColor());
 		UIManager.put("ToolTip.border", border);
-		UIManager.put("ToolTip.foreground", new ColorUIResource(255, 255, 255));
+		UIManager.put("ToolTip.foreground", new ColorUIResource(PMS.getConfiguration().getToolTipForegroundColor()));
 
 		// Display tooltips immediately and for a long time
 		ToolTipManager.sharedInstance().setInitialDelay(0);
@@ -341,15 +348,6 @@ public class LooksFrame extends JFrame implements IFrame, Observer {
 		toolBar.setRollover(true);
 
 		toolBar.add(new JPanel());
-		AbstractButton save = createToolBarButton(Messages.getString("LooksFrame.9"), "button-save.png");
-		save.addActionListener(new ActionListener() {
-			@Override
-			public void actionPerformed(ActionEvent e) {
-				PMS.get().save();
-			}
-		});
-		toolBar.add(save);
-		toolBar.addSeparator();
 		reload = createToolBarButton(Messages.getString("LooksFrame.12"), "button-restart.png");
 		reload.addActionListener(new ActionListener() {
 			@Override
@@ -359,7 +357,7 @@ public class LooksFrame extends JFrame implements IFrame, Observer {
 		});
 		reload.setToolTipText(Messages.getString("LooksFrame.28"));
 		toolBar.add(reload);
-		toolBar.addSeparator();
+		toolBar.addSeparator(new Dimension(20, 1));
 		AbstractButton quit = createToolBarButton(Messages.getString("LooksFrame.5"), "button-quit.png");
 		quit.addActionListener(new ActionListener() {
 			@Override
@@ -491,19 +489,18 @@ public class LooksFrame extends JFrame implements IFrame, Observer {
 	}
 
 	@Override
-	public void setValue(int v, String msg) {
-		st.getJpb().setValue(v);
-		st.getJpb().setString(msg);
+	public void updateBuffer() {
+		st.updateCurrentBitrate();
 	}
 
 	/**
 	 * This method is being called when a configuration change requiring
 	 * a restart of the HTTP server has been done by the user. It should notify the user
 	 * to restart the server.<br>
-	 * Currently the icon as well as the tool tip text of the restart button is being 
+	 * Currently the icon as well as the tool tip text of the restart button is being
 	 * changed.<br>
 	 * The actions requiring a server restart are defined by {@link PmsConfiguration#NEED_RELOAD_FLAGS}
-	 * 
+	 *
 	 * @param bool true if the server has to be restarted, false otherwise
 	 */
 	@Override
@@ -558,12 +555,18 @@ public class LooksFrame extends JFrame implements IFrame, Observer {
 	}
 
 	@Override
-	public void addRendererIcon(int code, String msg, String icon) {
-		st.addRendererIcon(code, msg, icon);
+	public void addRenderer(RendererConfiguration renderer) {
+		st.addRenderer(renderer);
+	}
+
+	@Override
+	public void updateRenderer(RendererConfiguration renderer) {
+		st.updateRenderer(renderer);
 	}
 
 	@Override
 	public void serverReady() {
+		st.updateMemoryUsage();
 		gt.addRenderers();
 		pt.addPlugins();
 	}
@@ -571,5 +574,9 @@ public class LooksFrame extends JFrame implements IFrame, Observer {
 	@Override
 	public void setScanLibraryEnabled(boolean flag) {
 		getNt().setScanLibraryEnabled(flag);
+	}
+
+	public String getLog() {
+		return getTt().getList().getText();
 	}
 }

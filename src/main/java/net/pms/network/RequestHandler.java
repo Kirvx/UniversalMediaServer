@@ -73,12 +73,13 @@ public class RequestHandler implements Runnable {
 		try {
 			int receivedContentLength = -1;
 			String userAgentString = null;
-			StringBuilder unknownHeaders = new StringBuilder();
-			String separator = "";
+			ArrayList<String> identifiers = new ArrayList<>();
 			RendererConfiguration renderer = null;
 
 			InetSocketAddress remoteAddress = (InetSocketAddress) socket.getRemoteSocketAddress();
 			InetAddress ia = remoteAddress.getAddress();
+
+			boolean isSelf = ia.getHostAddress().equals(PMS.get().getServer().getHost());
 
 			// Apply the IP filter
 			if (filterIp(ia)) {
@@ -95,27 +96,26 @@ public class RequestHandler implements Runnable {
 
 			// Attempt 1: try to recognize the renderer by its socket address from previous requests
 			renderer = RendererConfiguration.getRendererConfigurationBySocketAddress(ia);
-			ArrayList<String> headerLines = new ArrayList<>();
-			RendererConfiguration.SortedHeaderMap sortedHeaders = renderer == null ? new RendererConfiguration.SortedHeaderMap() : null;
+
+			// If the renderer exists but isn't marked as loaded it means it's unrecognized
+			// by upnp and we still need to attempt http recognition here.
+			boolean unrecognized = renderer == null || !renderer.loaded;
+			RendererConfiguration.SortedHeaderMap sortedHeaders = unrecognized ? new RendererConfiguration.SortedHeaderMap() : null;
 
 			// Gather all the headers
+			ArrayList<String> headerLines = new ArrayList<>();
 			String line = br.readLine();
 			while (line != null && line.length() > 0) {
 				headerLines.add(line);
-				if (renderer == null) {
+				if (unrecognized) {
 					sortedHeaders.put(line);
 				}
 				line = br.readLine();
 			}
 
-			if (renderer == null) {
+			if (unrecognized) {
 				// Attempt 2: try to recognize the renderer by matching headers
-				renderer = RendererConfiguration.getRendererConfigurationByHeaders(sortedHeaders);
-			}
-
-			if (renderer != null) {
-				renderer.associateIP(ia);
-				PMS.get().setRendererFound(renderer);
+				renderer = RendererConfiguration.getRendererConfigurationByHeaders(sortedHeaders, ia);
 			}
 
 			for (String headerLine : headerLines) {
@@ -126,6 +126,11 @@ public class RequestHandler implements Runnable {
 					request.setMediaRenderer(renderer);
 				}
 				if (headerLine.toUpperCase().startsWith("USER-AGENT")) {
+					// Is the request from our own Cling service, i.e. self-originating?
+					if (isSelf && headerLine.contains("UMS/")) {
+						LOGGER.trace("Ignoring self-originating request from " + ia + ":" + remoteAddress.getPort());
+						return;
+					}
 					userAgentString = headerLine.substring(headerLine.indexOf(':') + 1).trim();
 				}
 
@@ -201,8 +206,7 @@ public class RequestHandler implements Runnable {
 
 						if (!isKnown) {
 							// Truly unknown header, therefore interesting. Save for later use.
-							unknownHeaders.append(separator).append(headerLine);
-							separator = ", ";
+							identifiers.add(headerLine);
 						}
 					}
 				} catch (IllegalArgumentException e) {
@@ -212,24 +216,32 @@ public class RequestHandler implements Runnable {
 
 			if (request != null) {
 				// Still no media renderer recognized?
-				if (request.getMediaRenderer() == null) {
-					// Attempt 4: Not really an attempt; all other attempts to recognize
+				if (renderer == null) {
+					// Attempt 3: Not really an attempt; all other attempts to recognize
 					// the renderer have failed. The only option left is to assume the
 					// default renderer.
-					request.setMediaRenderer(RendererConfiguration.getDefaultConf());
-					LOGGER.trace("Using default media renderer: " + request.getMediaRenderer().getRendererName());
+					renderer = RendererConfiguration.resolve(ia, null);
+					request.setMediaRenderer(renderer);
+					if (renderer != null) {
+						LOGGER.trace("Using default media renderer: " + renderer.getConfName());
 
-					if (userAgentString != null && !userAgentString.equals("FDSSDP")) {
-						// We have found an unknown renderer
-						LOGGER.info("Media renderer was not recognized. Possible identifying HTTP headers: User-Agent: " + userAgentString +
-								("".equals(unknownHeaders.toString()) ? "" : ", " + unknownHeaders.toString()));
-						PMS.get().setRendererFound(request.getMediaRenderer());
+						if (userAgentString != null && !userAgentString.equals("FDSSDP")) {
+							// We have found an unknown renderer
+							identifiers.add(0, "User-Agent: " + userAgentString);
+							renderer.setIdentifiers(identifiers);
+							LOGGER.info("Media renderer was not recognized. Possible identifying HTTP headers:"
+								+ StringUtils.join(identifiers, ", "));
+						}
+					} else {
+						// If RendererConfiguration.resolve() didn't return the default renderer
+						// it means we know via upnp that it's not really a renderer.
+						return;
 					}
 				} else {
 					if (userAgentString != null) {
-						LOGGER.debug("HTTP User-Agent: " + userAgentString);
+						LOGGER.trace("HTTP User-Agent: " + userAgentString);
 					}
-					LOGGER.trace("Recognized media renderer: " + request.getMediaRenderer().getRendererName());
+					LOGGER.trace("Recognized media renderer: " + renderer.getRendererName());
 				}
 			}
 

@@ -41,6 +41,7 @@ import net.pms.io.ProcessWrapper;
 import net.pms.util.FileUtil;
 import net.pms.util.Iso639;
 import net.pms.util.OpenSubtitle;
+import net.pms.util.UMSUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,12 +65,12 @@ public abstract class Player {
 	// FIXME this is an implementation detail (and not a very good one).
 	// it's entirely up to engines how they construct their command lines.
 	// need to get rid of this
-	@Deprecated
 	public abstract String[] args();
 
 	public abstract String mimeType();
 	public abstract String executable();
-	protected static PmsConfiguration configuration = PMS.getConfiguration();
+	protected static final PmsConfiguration _configuration = PMS.getConfiguration();
+	protected PmsConfiguration configuration = _configuration;
 	private static List<FinalizeTranscoderArgsListener> finalizeTranscoderArgsListeners = new ArrayList<>();
 
 	public static void initializeFinalizeTranscoderArgsListeners() {
@@ -220,6 +221,7 @@ public abstract class Player {
 	 * The parameters to populate.
 	 */
 	public static void setAudioOutputParameters(DLNAMediaInfo media, OutputParams params) {
+		PmsConfiguration configuration = PMS.getConfiguration(params);
 		if (params.aid == null && media != null && media.getFirstAudioTrack() != null) {
 			// check for preferred audio
 			DLNAMediaAudio dtsTrack = null;
@@ -265,6 +267,7 @@ public abstract class Player {
 	 * The parameters to populate.
 	 */
 	public static void setSubtitleOutputParameters(String fileName, DLNAMediaInfo media, OutputParams params) {
+		PmsConfiguration configuration = PMS.getConfiguration(params);
 		String currentLang = null;
 		DLNAMediaSubtitle matchedSub = null;
 
@@ -412,15 +415,15 @@ public abstract class Player {
 					if (matchedSub != null && matchedSub.getLang() != null && matchedSub.getLang().equals("off")) {
 						st = new StringTokenizer(configuration.getForcedSubtitleTags(), ",");
 
-						while (sub.getFlavor() != null && st.hasMoreTokens()) {
+						while (sub.getSubtitlesTrackTitleFromMetadata() != null && st.hasMoreTokens()) {
 							String forcedTags = st.nextToken();
 							forcedTags = forcedTags.trim();
 
 							if (
-								sub.getFlavor().toLowerCase().contains(forcedTags) &&
+								sub.getSubtitlesTrackTitleFromMetadata().toLowerCase().contains(forcedTags) &&
 								Iso639.isCodesMatching(sub.getLang(), configuration.getForcedSubtitleLanguage())
 							) {
-								LOGGER.trace("Forcing preferred subtitles: " + sub.getLang() + "/" + sub.getFlavor());
+								LOGGER.trace("Forcing preferred subtitles: " + sub.getLang() + "/" + sub.getSubtitlesTrackTitleFromMetadata());
 								LOGGER.trace("Forced subtitles track: " + sub);
 
 								if (sub.getExternalFile() != null) {
@@ -454,7 +457,7 @@ public abstract class Player {
 			}
 
 			if (params.sid == null) {
-				st = new StringTokenizer(configuration.getSubtitlesLanguages(), ",");
+				st = new StringTokenizer(UMSUtils.getLangList(params.mediaRenderer), ",");
 				while (st.hasMoreTokens()) {
 					String lang = st.nextToken();
 					lang = lang.trim();
@@ -477,9 +480,25 @@ public abstract class Player {
 		}
 	}
 
+	/**
+	 * @see #convertToModX(int, int)
+	 */
+	@Deprecated
 	public int convertToMod4(int number) {
-		if (number % 4 != 0) {
-			number -= (number % 4);
+		return convertToModX(number, 4);
+	}
+
+	/**
+	 * Convert number to be divisible by mod.
+	 *
+	 * @param number the number to convert
+	 * @param mod the number to divide by
+	 *
+	 * @return the number divisible by mod
+	 */
+	public static int convertToModX(int number, int mod) {
+		if (number % mod != 0) {
+			number -= (number % mod);
 		}
 
 		return number;

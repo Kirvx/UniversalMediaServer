@@ -21,8 +21,9 @@ package net.pms.configuration;
 
 import ch.qos.logback.classic.LoggerContext;
 import java.util.*;
-import java.util.Map.Entry;
-import static net.pms.configuration.RendererConfiguration.*;
+import net.pms.configuration.RendererConfiguration.SortedHeaderMap;
+import static net.pms.configuration.RendererConfiguration.getRendererConfigurationByHeaders;
+import static net.pms.configuration.RendererConfiguration.loadRendererConfigurations;
 import org.apache.commons.configuration.ConfigurationException;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -34,7 +35,6 @@ import org.slf4j.LoggerFactory;
  * Test the RendererConfiguration class
  */
 public class RendererConfigurationTest {
-
 	@Before
 	public void setUp() {
 		// Silence all log messages from the PMS code that is being tested
@@ -66,6 +66,7 @@ public class RendererConfigurationTest {
 		// Known headers
 
 		// Cases that are too generic should not match anything
+		testHeaders(null, "User-Agent: Microsoft-Windows/6.2 UPnP/1.0 Microsoft-DLNA DLNADOC/1.50");
 		testHeaders(null, "User-Agent: UPnP/1.0 DLNADOC/1.50");
 		testHeaders(null, "User-Agent: Unknown Renderer");
 		testHeaders(null, "X-Unknown-Header: Unknown Content");
@@ -89,8 +90,10 @@ public class RendererConfigurationTest {
 		testHeaders("iPad / iPhone", "User-Agent: MPlayer 1.0rc4-4.2.1");
 		testHeaders("iPad / iPhone", "User-Agent: NSPlayer/4.1.0.3856");
 
-		// Netgear NeoTV:
-		testHeaders("Netgear NeoTV", "friendlyName.dlna.org: BD-Player");
+		// Microsoft Xbox One:
+		testHeaders("Xbox One", "FriendlyName.DLNA.ORG: Xbox-SystemOS");
+		testHeaders("Xbox One", "FriendlyName.DLNA.ORG: XboxOne");
+		testHeaders("Xbox One", "User-Agent: NSPlayer/12.00.9600.16411 WMFSDK/12.00.9600.16411");
 
 		// Philips:
 		testHeaders("Philips Aurea", "User-Agent: Allegro-Software-WebClient/4.61 DLNADOC/1.00");
@@ -98,25 +101,22 @@ public class RendererConfigurationTest {
 		// PhilipsPFL:
 		testHeaders("Philips TV", "User-Agent: Windows2000/0.0 UPnP/1.0 PhilipsIntelSDK/1.4 DLNADOC/1.50");
 
-		// PS3:
-		testHeaders("PlayStation 3", "User-Agent: PLAYSTATION 3", "X-AV-Client-Info: av=5.0; cn=\"Sony Computer Entertainment Inc.\"; mn=\"PLAYSTATION 3\"; mv=\"1.0\"");
-
 		// Realtek:
 		// FIXME: Actual conflict here! Popcorn Hour is returned...
 		//testHeaders("Realtek", "User-Agent: POSIX UPnP/1.0 Intel MicroStack/1.0.2718, RealtekMediaCenter, DLNADOC/1.50");
 		testHeaders("Realtek", "User-Agent: RealtekVOD neon/0.27.2", "RealtekMediaCenter: RealtekVOD");
 
 		// SamsungAllShare:
-		testHeaders("Samsung AllShare C/D", "User-Agent: SEC_HHP_[HT]D5500/1.0");
-		testHeaders("Samsung AllShare C/D", "User-Agent: SEC_HHP_[TV]UE32D5000/1.0");
-		testHeaders("Samsung AllShare C/D", "User-Agent: SEC_HHP_[TV]PS51D6900/1.0");
-		testHeaders("Samsung AllShare C/D", "User-Agent: DLNADOC/1.50 SEC_HHP_[TV]UE32D5000/1.0");
-		testHeaders("Samsung AllShare C/D", "User-Agent: DLNADOC/1.50 SEC_HHP_[TV]UN55D6050/1.0");
-		testHeaders("Samsung AllShare", "User-Agent: SEC_HHP_ Family TV/1.0");
-		testHeaders("Samsung AllShare", "User-Agent: DLNADOC/1.50 SEC_HHP_ Family TV/1.0");
-		testHeaders("Samsung AllShare", "User-Agent: SEC_HHP_[TV]UE46ES8000/1.0 DLNADOC/1.50");
-		testHeaders("Samsung AllShare", "User-Agent: SEC_HHP_[TV]Samsung LED40/1.0 DLNADOC/1.50");
-		testHeaders("Samsung AllShare", "User-Agent: SEC_HHP_[TV]UN55ES6100/1.0 DLNADOC/1.50");
+		testHeaders("Samsung C/D Series", "User-Agent: SEC_HHP_[HT]D5500/1.0");
+		testHeaders("Samsung C/D Series", "User-Agent: SEC_HHP_[TV]UE32D5000/1.0");
+		testHeaders("Samsung C/D Series", "User-Agent: SEC_HHP_[TV]PS51D6900/1.0");
+		testHeaders("Samsung C/D Series", "User-Agent: DLNADOC/1.50 SEC_HHP_[TV]UE32D5000/1.0");
+		testHeaders("Samsung C/D Series", "User-Agent: DLNADOC/1.50 SEC_HHP_[TV]UN55D6050/1.0");
+		testHeaders("Samsung E+ Series", "User-Agent: SEC_HHP_ Family TV/1.0");
+		testHeaders("Samsung E+ Series", "User-Agent: DLNADOC/1.50 SEC_HHP_ Family TV/1.0");
+		testHeaders("Samsung ES8000", "User-Agent: SEC_HHP_[TV]UE46ES8000/1.0 DLNADOC/1.50");
+		testHeaders("Samsung E+ Series", "User-Agent: SEC_HHP_[TV]Samsung LED40/1.0 DLNADOC/1.50");
+		testHeaders("Samsung E+ Series", "User-Agent: SEC_HHP_[TV]UN55ES6100/1.0 DLNADOC/1.50");
 
 		// Samsung-SMT-G7400:
 		testHeaders("Samsung SMT-G7400", "User-Agent: Linux/2.6.35 UPnP/1.0 NDS_MHF DLNADOC/1.50");
@@ -129,6 +129,23 @@ public class RendererConfigurationTest {
 
 		// Showtime 4:
 		testHeaders("Showtime 4", "User-Agent: Showtime PS3 4.2");
+
+		// Sony PlayStation 3:
+		testHeaders(
+			"PlayStation 3",
+			"User-Agent: PLAYSTATION 3",
+			"X-AV-Client-Info: av=5.0; cn=\"Sony Computer Entertainment Inc.\"; mn=\"PLAYSTATION 3\"; mv=\"1.0\";"
+		);
+
+		// Sony PlayStation 4:
+		testHeaders(
+			"PlayStation 4",
+			"User-Agent: PS4Application libhttp/1.000 (PS4) libhttp/2.51 (PlayStation 4)",
+			"User-Agent: libhttp/2.51 (PlayStation 4)"
+		);
+
+		// Sony Xperia:
+		testHeaders("Sony Xperia Z/ZL/ZQ/Z1/Z2", "X-AV-Client-Info: C6603");
 
 		// Telstra T-Box:
 		// Note: This isn't the full user-agent, just a snippet to find it

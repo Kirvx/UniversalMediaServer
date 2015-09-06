@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.List;
 import javax.swing.*;
 import net.pms.Messages;
+import net.pms.configuration.DeviceConfiguration;
 import net.pms.configuration.PmsConfiguration;
 import net.pms.dlna.DLNAMediaInfo;
 import net.pms.dlna.DLNAResource;
@@ -38,6 +39,7 @@ import net.pms.io.OutputParams;
 import net.pms.io.ProcessWrapper;
 import net.pms.io.ProcessWrapperImpl;
 import net.pms.network.HTTPResource;
+import net.pms.newgui.GuiUtil;
 import net.pms.util.PlayerUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -82,7 +84,7 @@ public class FFmpegAudio extends FFMpegVideo {
 				configuration.setAudioResample(e.getStateChange() == ItemEvent.SELECTED);
 			}
 		});
-		builder.add(noresample, cc.xy(2, 3));
+		builder.add(GuiUtil.getPreferredSizeComponent(noresample), cc.xy(2, 3));
 
 		return builder.getPanel();
 	}
@@ -135,6 +137,8 @@ public class FFmpegAudio extends FFMpegVideo {
 		DLNAMediaInfo media,
 		OutputParams params
 	) throws IOException {
+		PmsConfiguration prev = configuration;
+		configuration = (DeviceConfiguration)params.mediaRenderer;
 		final String filename = dlna.getSystemName();
 		params.maxBufferSize = configuration.getMaxAudioBuffer();
 		params.waitbeforestart = 2000;
@@ -231,6 +235,7 @@ public class FFmpegAudio extends FFMpegVideo {
 		ProcessWrapperImpl pw = new ProcessWrapperImpl(cmdArray, params);
 		pw.runInNewThread();
 
+		configuration = prev;
 		return pw;
 	}
 
@@ -239,6 +244,7 @@ public class FFmpegAudio extends FFMpegVideo {
 		if (
 			PlayerUtil.isAudio(resource, Format.Identifier.FLAC) ||
 			PlayerUtil.isAudio(resource, Format.Identifier.M4A) ||
+			PlayerUtil.isAudio(resource, Format.Identifier.MP3) ||
 			PlayerUtil.isAudio(resource, Format.Identifier.OGG) ||
 			PlayerUtil.isAudio(resource, Format.Identifier.WAV) ||
 			PlayerUtil.isWebAudio(resource)

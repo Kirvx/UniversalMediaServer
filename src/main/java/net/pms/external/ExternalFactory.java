@@ -40,7 +40,6 @@ import net.pms.Messages;
 import net.pms.PMS;
 import net.pms.configuration.PmsConfiguration;
 import net.pms.configuration.RendererConfiguration;
-import net.pms.dlna.RootFolder;
 import net.pms.external.URLResolver.URLResult;
 import net.pms.newgui.LooksFrame;
 import org.apache.commons.io.FileUtils;
@@ -246,12 +245,7 @@ public class ExternalFactory {
 			}
 		}
 
-		ArrayList<RendererConfiguration> renderers = RendererConfiguration.getEnabledRenderersConfigurations();
-
-		for (RendererConfiguration r : renderers) {
-			RootFolder rf = r.getRootFolder();
-			rf.reset();
-		}
+		RendererConfiguration.resetAllRenderers();
 
 		if (remove != null) {
 			externalListeners.remove(remove);
@@ -454,10 +448,10 @@ public class ExternalFactory {
 	private static void postInstall(Class<?> clazz) {
 		Method postInstall;
 		try {
-			postInstall = clazz.getDeclaredMethod("postInstall", null);
+			postInstall = clazz.getDeclaredMethod("postInstall", (Class<?>[]) null);
 
 			if (Modifier.isStatic(postInstall.getModifiers())) {
-				postInstall.invoke(null, null);
+				postInstall.invoke((Object[]) null, (Object[]) null);
 			}
 		}
 

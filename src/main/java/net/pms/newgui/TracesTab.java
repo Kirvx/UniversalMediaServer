@@ -33,9 +33,6 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.IOException;
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.Locale;
 import javax.swing.*;
@@ -43,7 +40,10 @@ import net.pms.Messages;
 import net.pms.PMS;
 import net.pms.configuration.PmsConfiguration;
 import net.pms.logging.LoggingConfigFileLoader;
+import net.pms.newgui.components.CustomJButton;
 import net.pms.util.FormLayoutUtil;
+import net.pms.util.ProcessUtil;
+import net.pms.util.UMSUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -95,11 +95,7 @@ public class TracesTab {
 	}
 	
 	public void append(String msg) {
-		DateFormat dateFormat = new SimpleDateFormat("MM-dd HH:mm:ss");
-		Date date = new Date();
-
-		String[] messageDisplay = msg.replaceFirst("]", "string that should never match").split("string that should never match");
-		getList().append(dateFormat.format(date) + " " + messageDisplay[1]);
+		getList().append(UMSUtils.logFormat(msg));
 		final JScrollBar vbar = jListPane.getVerticalScrollBar();
 
 		// If scrollbar was already at the bottom we schedule a new
@@ -184,14 +180,18 @@ public class TracesTab {
 			Messages.getString("TracesTab.7"),
 			Messages.getString("TracesTab.8"),
 			Messages.getString("TracesTab.9"),
-			Messages.getString("TracesTab.10")
+			Messages.getString("TracesTab.10"),
+			Messages.getString("TracesTab.15"),
+			Messages.getString("TracesTab.16")
 		};
 		final int[] realLevel = {
 				Level.ERROR_INT,
 				Level.WARN_INT,
 				Level.INFO_INT,
 				Level.DEBUG_INT,
-				Level.TRACE_INT
+				Level.TRACE_INT,
+				Level.ALL_INT,
+				Level.OFF_INT
 		};
 		JComboBox level = new JComboBox(levels);
 		int curLev = l.getLevel().toInt();
@@ -207,14 +207,39 @@ public class TracesTab {
 			@Override
 			public void actionPerformed(ActionEvent e) {
 				JComboBox cb = (JComboBox)e.getSource();
-				int newLevel = cb.getSelectedIndex();
-				l.setLevel(Level.toLevel(realLevel[newLevel]));
-				LOGGER.info("Changed debug level to " + l.getLevel().toString());
+				l.setLevel(Level.toLevel(realLevel[cb.getSelectedIndex()]));
+				Level level = l.getLevel();
+				configuration.setRootLogLevel(level);
+				// Note: depending on new level this may not actually print anything
+				LOGGER.info("Changed debug level to " + level);
 			}
 		});
 		JLabel label = new JLabel(Messages.getString("TracesTab.11") + ": ");
 		builder.add(label, cc.xy(3, 2));
 		builder.add(level, cc.xy(4, 2));
+		if (PMS.getTraceMode() == 2) {
+			// Forced trace mode
+			level.setEnabled(false);
+		}
+
+		// Add buttons to pack logs (there may be more than one)
+		JPanel pLogPackButtons = new JPanel(new FlowLayout(FlowLayout.LEFT));
+
+		if (PMS.getTraceMode() == 0) {
+			// PMS was not started in trace mode
+			CustomJButton rebootTrace = new CustomJButton(Messages.getString("TracesTab.12"));
+			rebootTrace.addMouseListener(new MouseAdapter() {
+				@Override
+				public void mouseClicked(MouseEvent e) {
+					int opt = JOptionPane.showConfirmDialog(null, Messages.getString("TracesTab.13"),
+						Messages.getString("TracesTab.14"), JOptionPane.YES_NO_OPTION);
+					if (opt == JOptionPane.YES_OPTION) {
+						ProcessUtil.reboot("trace");
+					}
+				}
+			});
+			pLogPackButtons.add(rebootTrace);
+		}
 
 		CustomJButton packDbg = new CustomJButton(Messages.getString("TracesTab.4"));
 		packDbg.addMouseListener(new MouseAdapter() {
@@ -226,7 +251,8 @@ public class TracesTab {
 					comp, "Options", JOptionPane.CLOSED_OPTION, JOptionPane.PLAIN_MESSAGE, null, cancelStr, null);
 			}
 		});
-		builder.add(packDbg, cc.xy(1, 2));
+		pLogPackButtons.add(packDbg);
+		builder.add(pLogPackButtons, cc.xy(1, 2));
 
 		return builder.getPanel();
 	}

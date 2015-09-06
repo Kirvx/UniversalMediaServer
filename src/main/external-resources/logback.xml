@@ -9,7 +9,14 @@
 		Let PMS decide the path for the logfile: either the current directory
 		or (when that is read only) the system temp directory.
 	-->
-	<define name="debugLogPath" class="net.pms.logging.DebugLogPathDefiner" />
+	<define name="debugLogPath" class="net.pms.logging.DebugLogPropertyDefiner">
+		<key>debugLogPath</key>
+	</define>
+
+	<!-- Get the user-preferred root logging level. -->
+	<define name="rootLevel" class="net.pms.logging.DebugLogPropertyDefiner">
+		<key>rootLevel</key>
+	</define>
 
 	<!-- Appender for messages in the PMS "Traces" tab -->
 	<appender name="traces" class="net.pms.logging.FrameAppender">
@@ -19,7 +26,7 @@
 		</filter>
 
 		<encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-			<pattern>%-5level %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %msg%n</pattern>
+			<pattern>%-5level %d{HH:mm:ss.SSS} [%thread] %msg%n</pattern>
 		</encoder>
 	</appender>
 
@@ -30,7 +37,7 @@
 			<level>INFO</level>
 		</filter>
 		<encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-			<pattern>%-5level %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %msg%n</pattern>
+			<pattern>%-5level %d{HH:mm:ss.SSS} [%thread] %msg%n</pattern>
 		</encoder>
 	</appender>
 
@@ -43,7 +50,7 @@
 		<file>${debugLogPath}${file.separator}debug.log</file>
 		<append>false</append>  <!-- Start new debug.log on each application start -->
 		<encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-			<pattern>%-5level %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %msg%n</pattern>
+			<pattern>%-5level %d{HH:mm:ss.SSS} [%thread] %msg%n</pattern>
 		</encoder>
 	</appender>
 
@@ -63,7 +70,7 @@
 			<maxFileSize>10MB</maxFileSize>
 		</triggeringPolicy>
 		<encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-			<pattern>%-5level %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %msg%n</pattern>
+			<pattern>%-5level %d{HH:mm:ss.SSS} [%thread] %msg%n</pattern>
 		</encoder>
 	</appender>
 
@@ -81,7 +88,7 @@
 	<logger name="httpclient.wire" level="WARN" />
 
 	<!-- Root logger defines the minimum log level for all loggers -->
-	<root level="DEBUG">
+	<root level="${rootLevel}">
 		<appender-ref ref="traces" />
 		<appender-ref ref="console" />
 

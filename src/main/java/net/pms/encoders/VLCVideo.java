@@ -27,27 +27,22 @@ import java.awt.ComponentOrientation;
 import java.awt.Font;
 import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
-import java.awt.event.KeyAdapter;
-import java.awt.event.KeyEvent;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import javax.swing.*;
 import net.pms.Messages;
+import net.pms.PMS;
+import net.pms.configuration.DeviceConfiguration;
 import net.pms.configuration.PmsConfiguration;
 import net.pms.configuration.RendererConfiguration;
 import net.pms.dlna.DLNAMediaInfo;
 import net.pms.dlna.DLNAResource;
 import net.pms.formats.Format;
-import net.pms.io.OutputParams;
-import net.pms.io.PipeProcess;
-import net.pms.io.ProcessWrapper;
-import net.pms.io.ProcessWrapperImpl;
+import net.pms.io.*;
 import net.pms.network.HTTPResource;
-import net.pms.util.FileUtil;
-import net.pms.util.FormLayoutUtil;
-import net.pms.util.PlayerUtil;
-import net.pms.util.ProcessUtil;
+import net.pms.newgui.GuiUtil;
+import net.pms.util.*;
 import org.apache.commons.lang3.StringUtils;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
@@ -67,14 +62,14 @@ import org.slf4j.LoggerFactory;
 public class VLCVideo extends Player {
 	private static final Logger LOGGER = LoggerFactory.getLogger(VLCVideo.class);
 	private static final String COL_SPEC = "left:pref, 3dlu, p, 3dlu, 0:grow";
-	private static final String ROW_SPEC = "p, 3dlu, p, 3dlu, p, 9dlu, p, 3dlu, p, 3dlu, p";
+	private static final String ROW_SPEC = "p, 3dlu, p, 3dlu, p";
 	public static final String ID = "vlctranscoder";
 	protected JTextField scale;
 	protected JCheckBox experimentalCodecs;
 	protected JCheckBox audioSyncEnabled;
 	protected JTextField sampleRate;
 	protected JCheckBox sampleRateOverride;
-	protected JTextField extraParams;
+	SystemUtils registry = PMS.get().getRegistry();
 
 	protected boolean videoRemux;
 
@@ -98,6 +93,11 @@ public class VLCVideo extends Player {
 
 	@Override
 	public boolean isTimeSeekable() {
+		return true;
+	}
+
+	@Override
+	public boolean isGPUAccelerationReady() {
 		return true;
 	}
 
@@ -140,49 +140,41 @@ public class VLCVideo extends Player {
 	 */
 	protected CodecConfig genConfig(RendererConfiguration renderer) {
 		CodecConfig codecConfig = new CodecConfig();
+		boolean isXboxOneWebVideo = renderer.isXboxOne() && purpose() == VIDEO_WEBSTREAM_PLAYER;
 
-		if (renderer.isTranscodeToWMV()) {
-			// Assume WMV = Xbox = all media renderers with this flag
-			LOGGER.debug("Using XBox WMV codecs");
+		if (
+			(
+				renderer.isTranscodeToWMV() &&
+				!renderer.isXbox360()
+			) ||
+			isXboxOneWebVideo
+		) {
 			codecConfig.videoCodec = "wmv2";
 			codecConfig.audioCodec = "wma";
 			codecConfig.container = "asf";
-		} else if (renderer.isTranscodeToMPEGTSH264AC3()) {
-			LOGGER.debug("Using H.264 and MP2 with MPEG-TS container");
-			codecConfig.videoCodec = "h264";
-
-			/**
-			 * XXX a52 (AC-3) causes the audio to cut out after
-			 * a while (5, 10, and 45 minutes have been spotted)
-			 * with versions as recent as 2.0.5. MP2 works without
-			 * issue, so we use that as a workaround for now.
-			 * codecConfig.audioCodec = "a52";
-			 */
-			codecConfig.audioCodec = "a52";
-
-			codecConfig.container = "ts";
-
-			videoRemux = true;
-		} else if (renderer.isTranscodeToMPEGTSH264AAC()) {
-			LOGGER.debug("Using H.264 and AAC with MPEG-TS container");
-			codecConfig.videoCodec = "h264";
-			codecConfig.audioCodec = "mp4a";
-			codecConfig.container = "ts";
-
-			videoRemux = true;
 		} else {
-			codecConfig.videoCodec = "mp2v";
-			codecConfig.audioCodec = "mp2a";
+			/**
+			 * VLC does not support H.265 encoding as of VLC 2.1.5.
+			 */
+			if (renderer.isTranscodeToH264() || renderer.isTranscodeToH265()) {
+				codecConfig.videoCodec = "h264";
+				videoRemux = true;
+			} else {
+				codecConfig.videoCodec = "mp2v";
+			}
 
-			if (renderer.isTranscodeToMPEGTSMPEG2AC3()) {
-				LOGGER.debug("Using standard DLNA codecs with an MPEG-TS container");
+			if (renderer.isTranscodeToAC3()) {
+				codecConfig.audioCodec = "a52";
+			} else {
+				codecConfig.audioCodec = "mp4a";
+			}
+
+			if (renderer.isTranscodeToMPEGTS()) {
 				codecConfig.container = "ts";
 			} else {
-				LOGGER.debug("Using standard DLNA codecs with an MPEG-PS (default) container");
 				codecConfig.container = "ps";
 			}
 		}
-
 		LOGGER.trace("Using " + codecConfig.videoCodec + ", " + codecConfig.audioCodec + ", " + codecConfig.container);
 
 		/**
@@ -237,9 +229,21 @@ public class VLCVideo extends Player {
 		// Video scaling
 		args.put("scale", "1.0");
 
-		// Audio Channels
+		boolean isXboxOneWebVideo = params.mediaRenderer.isXboxOne() && purpose() == VIDEO_WEBSTREAM_PLAYER;
+
+		/**
+		 * Only output 6 audio channels for codecs other than AC-3 because as of VLC
+		 * 2.1.5, VLC screws up the channel mapping, making a rear channel go through
+		 * a front speaker.
+		 * Re-evaluate if they ever fix it.
+		 */
 		int channels = 2;
-		if (params.aid.getAudioProperties().getNumberOfChannels() > 2 && configuration.getAudioChannelCount() == 6) {
+		if (
+			!isXboxOneWebVideo &&
+			params.aid.getAudioProperties().getNumberOfChannels() > 2 &&
+			configuration.getAudioChannelCount() == 6 &&
+			!params.mediaRenderer.isTranscodeToAC3()
+		) {
 			channels = 6;
 		}
 		args.put("channels", channels);
@@ -298,6 +302,8 @@ public class VLCVideo extends Player {
 		int defaultMaxBitrates[] = getVideoBitrateConfig(configuration.getMaximumBitrate());
 		int rendererMaxBitrates[] = new int[2];
 
+		boolean isXboxOneWebVideo = params.mediaRenderer.isXboxOne() && purpose() == VIDEO_WEBSTREAM_PLAYER;
+
 		if (StringUtils.isNotEmpty(params.mediaRenderer.getMaxVideoBitrate())) {
 			rendererMaxBitrates = getVideoBitrateConfig(params.mediaRenderer.getMaxVideoBitrate());
 		}
@@ -325,7 +331,7 @@ public class VLCVideo extends Player {
 			 *
 			 * We also apply the correct buffer size in this section.
 			 */
-			if (params.mediaRenderer.isTranscodeToMPEGTSH264AC3() || params.mediaRenderer.isTranscodeToMPEGTSH264AAC()) {
+			if (!isXboxOneWebVideo && (params.mediaRenderer.isTranscodeToH264() || params.mediaRenderer.isTranscodeToH265())) {
 				if (
 					params.mediaRenderer.isH264Level41Limited() &&
 					defaultMaxBitrates[0] > 31250
@@ -372,7 +378,7 @@ public class VLCVideo extends Player {
 			videoBitrateOptions.add(String.valueOf(defaultMaxBitrates[0]));
 		}
 
-		if (!params.mediaRenderer.isTranscodeToMPEGTSH264AC3() && !params.mediaRenderer.isTranscodeToMPEGTSH264AAC()) {
+		if (isXboxOneWebVideo || (!params.mediaRenderer.isTranscodeToH264() && !params.mediaRenderer.isTranscodeToH265())) {
 			// Add MPEG-2 quality settings
 			String mpeg2Options = configuration.getMPEG2MainSettingsFFmpeg();
 			String mpeg2OptionsRenderer = params.mediaRenderer.getCustomFFmpegMPEG2Options();
@@ -425,15 +431,11 @@ public class VLCVideo extends Player {
 
 	@Override
 	public ProcessWrapper launchTranscode(DLNAResource dlna, DLNAMediaInfo media, OutputParams params) throws IOException {
+		PmsConfiguration prev = configuration;
+		configuration = (DeviceConfiguration) params.mediaRenderer;
 		final String filename = dlna.getSystemName();
 		boolean isWindows = Platform.isWindows();
-		if (params.aid == null) {
-			setAudioOutputParameters(media, params);
-		}
-
-		if (params.sid == null || (params.sid != null && StringUtils.isNotEmpty(params.sid.getLiveSubURL()))) {
-			setSubtitleOutputParameters(filename, media, params);
-		}
+		setAudioAndSubs(filename, media, params);
 
 		// Make sure we can play this
 		CodecConfig config = genConfig(params.mediaRenderer);
@@ -455,11 +457,24 @@ public class VLCVideo extends Player {
 		cmdList.add("-I");
 		cmdList.add("dummy");
 
-		// Disable hardware acceleration which is enabled by default,
-		// but for hardware acceleration, user must enable it in "VLC Preferences",
-		// until they release documentation for new functionalities introduced in 2.1.4+
-		if (!configuration.isGPUAcceleration()) {
-			cmdList.add("--avcodec-hw=disabled");
+		/**
+		 * Disable hardware acceleration which is enabled by default,
+		 * but for hardware acceleration, user must enable it in "VLC Preferences",
+		 * until they release documentation for new functionalities introduced in 2.1.4+
+		 */
+		if (registry.getVlcVersion() != null) {
+			String vlcVersion = registry.getVlcVersion();
+			Version currentVersion = new Version(vlcVersion);
+			Version requiredVersion = new Version("2.1.4");
+
+			if (currentVersion.compareTo(requiredVersion) > 0) {
+				if (!configuration.isGPUAcceleration()) {
+					cmdList.add("--avcodec-hw=disabled");
+					LOGGER.trace("Disabled VLC's hardware acceleration.");
+				}
+			} else if (!configuration.isGPUAcceleration()) {
+				LOGGER.trace("Version " + vlcVersion + " of VLC is too low to handle the way we disable hardware acceleration.");
+			}
 		}
 
 		// Useful for the more esoteric codecs people use
@@ -530,7 +545,13 @@ public class VLCVideo extends Player {
 			cmdList.add("--sout-x264-preset");
 			cmdList.add("superfast");
 
-			cmdList.add("--no-sout-avcodec-hurry-up");
+			/**
+			 * This option prevents VLC from speeding up transcoding by disabling certain
+			 * codec optimizations if the CPU is struggling to keep up.
+			 * It is already disabled by default so there is no reason to specify that here,
+			 * plus the option doesn't work on versions of VLC from 2.0.7 to 2.1.5.
+			 */
+			//cmdList.add("--no-sout-avcodec-hurry-up");
 
 			cmdList.addAll(getVideoBitrateOptions(dlna, media, params));
 		}
@@ -570,11 +591,6 @@ public class VLCVideo extends Player {
 		// Force VLC to exit when finished
 		cmdList.add("vlc://quit");
 
-		// Add any extra parameters
-		if (!extraParams.getText().trim().isEmpty()) { // Add each part as a new item
-			cmdList.addAll(Arrays.asList(StringUtils.split(extraParams.getText().trim(), " ")));
-		}
-
 		// Pass to process wrapper
 		String[] cmdArray = new String[cmdList.size()];
 		cmdList.toArray(cmdArray);
@@ -590,6 +606,7 @@ public class VLCVideo extends Player {
 		}
 
 		pw.runInNewThread();
+		configuration = prev;
 		return pw;
 	}
 
@@ -618,7 +635,7 @@ public class VLCVideo extends Player {
 				configuration.setVlcExperimentalCodecs(e.getStateChange() == ItemEvent.SELECTED);
 			}
 		});
-		builder.add(experimentalCodecs, FormLayoutUtil.flip(cc.xy(1, 3), colSpec, orientation));
+		builder.add(GuiUtil.getPreferredSizeComponent(experimentalCodecs), FormLayoutUtil.flip(cc.xy(1, 3), colSpec, orientation));
 
 		audioSyncEnabled = new JCheckBox(Messages.getString("MEncoderVideo.2"), configuration.isVlcAudioSyncEnabled());
 		audioSyncEnabled.setContentAreaFilled(false);
@@ -628,82 +645,7 @@ public class VLCVideo extends Player {
 				configuration.setVlcAudioSyncEnabled(e.getStateChange() == ItemEvent.SELECTED);
 			}
 		});
-		builder.add(audioSyncEnabled, FormLayoutUtil.flip(cc.xy(1, 5), colSpec, orientation));
-
-		// Developer stuff. Theoretically temporary
-		cmp = builder.addSeparator(Messages.getString("VlcTrans.10"), FormLayoutUtil.flip(cc.xyw(1, 7, 5), colSpec, orientation));
-		cmp = (JComponent) cmp.getComponent(0);
-		cmp.setFont(cmp.getFont().deriveFont(Font.BOLD));
-
-		// Add scale as a subpanel because it has an awkward layout
-		/**
-		mainPanel.append(Messages.getString("VlcTrans.11"));
-		FormLayout scaleLayout = new FormLayout("pref,3dlu,pref", "");
-		DefaultFormBuilder scalePanel = new DefaultFormBuilder(scaleLayout);
-		double startingScale = Double.valueOf(configuration.getVlcScale());
-		scalePanel.append(scale = new JTextField(String.valueOf(startingScale)));
-		final JSlider scaleSlider = new JSlider(JSlider.HORIZONTAL, 0, 10, (int) (startingScale * 10));
-		scalePanel.append(scaleSlider);
-		scaleSlider.addChangeListener(new ChangeListener() {
-			@Override
-			public void stateChanged(ChangeEvent ce) {
-				String value = String.valueOf((double) scaleSlider.getValue() / 10);
-				scale.setText(value);
-				configuration.setVlcScale(value);
-			}
-		});
-		scale.addKeyListener(new KeyAdapter() {
-			@Override
-			public void keyReleased(KeyEvent e) {
-				String typed = scale.getText();
-				if (!typed.matches("\\d\\.\\d")) {
-					return;
-				}
-				double value = Double.parseDouble(typed);
-				scaleSlider.setValue((int) (value * 10));
-				configuration.setVlcScale(String.valueOf(value));
-			}
-		});
-		mainPanel.append(scalePanel.getPanel(), 3);
-
-		// Audio sample rate
-		FormLayout sampleRateLayout = new FormLayout("right:pref, 3dlu, right:pref, 3dlu, right:pref, 3dlu, left:pref", "");
-		DefaultFormBuilder sampleRatePanel = new DefaultFormBuilder(sampleRateLayout);
-		sampleRateOverride = new JCheckBox(Messages.getString("VlcTrans.17"), configuration.getVlcSampleRateOverride());
-		sampleRatePanel.append(Messages.getString("VlcTrans.18"), sampleRateOverride);
-		sampleRate = new JTextField(configuration.getVlcSampleRate(), 8);
-		sampleRate.setEnabled(configuration.getVlcSampleRateOverride());
-		sampleRate.addKeyListener(new KeyAdapter() {
-			@Override
-			public void keyReleased(KeyEvent e) {
-				configuration.setVlcSampleRate(sampleRate.getText());
-			}
-		});
-		sampleRatePanel.append(Messages.getString("VlcTrans.19"), sampleRate);
-		sampleRateOverride.addItemListener(new ItemListener() {
-			@Override
-			public void itemStateChanged(ItemEvent e) {
-				boolean checked = e.getStateChange() == ItemEvent.SELECTED;
-				configuration.setVlcSampleRateOverride(checked);
-				sampleRate.setEnabled(checked);
-			}
-		});
-
-		mainPanel.nextLine();
-		mainPanel.append(sampleRatePanel.getPanel(), 7);
-
-		// Extra options
-		mainPanel.nextLine();
-		*/
-		builder.addLabel(Messages.getString("VlcTrans.20"), FormLayoutUtil.flip(cc.xy(1, 9), colSpec, orientation));
-		extraParams = new JTextField(configuration.getFont());
-		extraParams.addKeyListener(new KeyAdapter() {
-			@Override
-			public void keyReleased(KeyEvent e) {
-				configuration.setFont(extraParams.getText());
-			}
-		});
-		builder.add(extraParams, FormLayoutUtil.flip(cc.xyw(3, 9, 3), colSpec, orientation));
+		builder.add(GuiUtil.getPreferredSizeComponent(audioSyncEnabled), FormLayoutUtil.flip(cc.xy(1, 5), colSpec, orientation));
 
 		JPanel panel = builder.getPanel();
 
